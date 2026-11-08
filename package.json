@@ -1,0 +1,10 @@
+{
+  "name": "jellyfish-hands",
+  "private": true,
+  "type": "module",
+  "description": "手势控制的水母 · three.js + MediaPipe Hands",
+  "scripts": {
+    "start": "./serve.sh",
+    "test": "node tests/gesture.test.mjs"
+  }
+}
