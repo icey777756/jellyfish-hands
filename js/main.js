@@ -31,7 +31,7 @@ const LOW_END = (navigator.hardwareConcurrency || 8) <= 4;
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW_END ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.82;
+renderer.toneMappingExposure = 0.72;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#04050a');
@@ -44,8 +44,8 @@ camera.position.set(0, 0.1, 7.0);
 const bgGeo = new THREE.PlaneGeometry(60, 60);
 const bgMat = new THREE.ShaderMaterial({
   uniforms: {
-    uTop: { value: new THREE.Color('#131c28') },
-    uBottom: { value: new THREE.Color('#05070b') },
+    uTop: { value: new THREE.Color('#2a1745') },
+    uBottom: { value: new THREE.Color('#04121a') },
     uTime: { value: 0 }
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
@@ -57,7 +57,7 @@ const bgMat = new THREE.ShaderMaterial({
       vec3 col = mix(uTop, uBottom, smoothstep(0.0, 0.85, d));
       col += uBottom * 0.4;
       float glow = smoothstep(0.6, 0.0, d) * 0.35;
-      col += vec3(0.10, 0.16, 0.20) * glow;
+      col += vec3(0.12, 0.24, 0.32) * glow;
       gl_FragColor = vec4(col, 1.0);
     }
   `,
@@ -96,7 +96,7 @@ let bloomPass = null;
 if (!NO_BLOOM) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.62, 0.42);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.55, 0.5);
   composer.addPass(bloomPass);
 }
 
@@ -302,7 +302,7 @@ function tick() {
   }
   bgMat.uniforms.uTime.value += dt;
 
-  if (bloomPass) bloomPass.strength = 0.26 + input.bloom * 0.35;
+  if (bloomPass) bloomPass.strength = 0.34 + input.bloom * 0.40;
   if (composer) composer.render(dt); else renderer.render(scene, camera);
 }
 

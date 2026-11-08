@@ -119,6 +119,8 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
   let bell = null;
   const materials = [];
 
+  const deformMeshes = [];
+
   model.traverse((o) => {
     if (!o.isMesh) return;
     o.frustumCulled = false;
@@ -129,9 +131,11 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       m.side = THREE.DoubleSide;
       m.envMapIntensity = 1.4;
       if (m.emissive) {
-        // 扫描件没有自发光贴图，补一点点，让 Bloom 能吃到高光
-        m.emissiveIntensity = 0.08;
-        m.emissive = new THREE.Color('#1e3f7a');
+        // 把反照率贴图当作自发光，雕塑会像从内部透光，斑点也会亮起来
+        m.emissive = new THREE.Color(0xffffff);
+        if (m.map) m.emissiveMap = m.map;
+        m.emissiveIntensity = 0.28;
+        m.toneMapped = true;
       }
 
       // 金色斑点：必须排在半透明钟体之后渲染，否则会被蓝色罩住变成灰白
@@ -143,9 +147,71 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       }
       m.needsUpdate = true;
       materials.push(m);
+      m.roughness = Math.min(m.roughness ?? 1, 0.45);   // 雕塑表面偏亮面，玻璃感
+      m.metalness = Math.max(m.metalness ?? 0, 0.05);
+      deformMeshes.push(o);
     }
     if (o.morphTargetDictionary && 'bloom' in o.morphTargetDictionary) bell = o;
   });
+
+  // ---- 顶点形变：伞盖收缩 + 触手拖尾摆动（静态网格的"活起来"方案）
+  const boundsBox = new THREE.Box3().setFromObject(model);
+  const yTop = boundsBox.max.y;
+  const yBottom = boundsBox.min.y;
+  const shaders = [];
+
+  const patch = (mat) => {
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = { value: 0 };
+      shader.uniforms.uContract = { value: 0 };
+      shader.uniforms.uSway = { value: 0.6 };
+      shader.uniforms.uGlow = { value: 0.9 };
+      shader.uniforms.uRim = { value: new THREE.Color('#7fd8ff') };
+      shader.uniforms.uBottom = { value: yBottom };
+      shader.uniforms.uTop = { value: yTop };
+
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>
+          uniform float uTime, uContract, uSway, uBottom, uTop;
+        `)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          {
+            float h = clamp((transformed.y - uBottom) / max(uTop - uBottom, 0.001), 0.0, 1.0);
+            float bell = smoothstep(0.62, 0.92, h);          // 伞盖为正，触手区为 0
+            float tail = 1.0 - bell;
+
+            // 伞盖收缩：横向收、纵向拉伸，边缘收得更多
+            float rim = smoothstep(0.58, 0.78, h) * (1.0 - smoothstep(0.9, 1.0, h));
+            transformed.xz *= 1.0 - uContract * (0.10 * bell + 0.06 * rim);
+            transformed.y += uContract * 0.06 * bell;
+
+            // 触手：沿高度相位递延的拖尾摆动
+            float w1 = sin(uTime * 1.5 - h * 7.0);
+            float w2 = cos(uTime * 1.15 - h * 5.0 + 1.7);
+            transformed.x += w1 * tail * 0.11 * uSway;
+            transformed.z += w2 * tail * 0.09 * uSway;
+            transformed.y += sin(uTime * 0.9 - h * 3.0) * tail * 0.03 * uSway;
+          }
+        `);
+
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+          uniform vec3 uRim;
+          uniform float uGlow, uTime;
+        `)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          float fres = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 2.4);
+          vec3 rimCol = mix(uRim, vec3(1.0, 0.72, 0.86), 0.35 + 0.35 * sin(uTime * 0.35));
+          totalEmissiveRadiance += rimCol * fres * uGlow;
+        `);
+
+      mat.userData.shader = shader;
+      shaders.push(shader);
+    };
+    mat.needsUpdate = true;
+  };
+
+  for (const m of materials) patch(m);
 
   const particles = makeParticles();
   group.add(particles.points);
@@ -187,6 +253,19 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
     const glow = 1.2 + state.bloom * 1.6;
     for (const m of materials) {
       if (m.emissive && 'emissiveIntensity' in m) m.emissiveIntensity = glow;
+    }
+
+    // 形变：收缩节律（快速收、缓慢放，像真水母）
+    const period = 2.6 - state.energy * 0.9;
+    const k = (state.time % period) / period;
+    const quick = k < 0.32 ? Math.sin((k / 0.32) * Math.PI * 0.5) : Math.cos(((k - 0.32) / 0.68) * Math.PI * 0.5);
+    const contract = THREE.MathUtils.clamp(quick * (0.55 + state.energy * 0.8) + morph.contract * 0.6, 0, 1.6);
+
+    for (const sh of shaders) {
+      sh.uniforms.uTime.value = state.time;
+      sh.uniforms.uContract.value = contract;
+      sh.uniforms.uSway.value = 0.5 + state.energy * 0.7 + state.bloom * 0.5;
+      sh.uniforms.uGlow.value = 0.34 + state.bloom * 0.7 + contract * 0.18;
     }
 
     particles.uniforms.uTime.value = state.time;
