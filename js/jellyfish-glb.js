@@ -230,25 +230,19 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
         `)
         .replace('#include <color_fragment>', `#include <color_fragment>
           {
-            // 外围垂下来的细长触手 → 淡粉；中央口腕与伞盖 → 保持蓝
-            float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-            float dark = smoothstep(0.24, 0.05, lum);                 // 贴图偏黑的细丝
-            float outer = smoothstep(0.28, 0.55, vR);                 // 离轴越远越是外围丝
-            float below = 1.0 - smoothstep(0.88, 0.975, vH);           // 伞盖以下
-            float thread = clamp(max(outer * below, dark * below * 0.9), 0.0, 1.0);
-            thread *= 0.85 + 0.15 * sin(vH * 47.0 + vR * 12.0);       // 打散分界
+            // 一条连续的高度色带：粉（触手）→ 淡紫（连接处）→ 蓝（钟体）
+            // 完全替换贴图颜色，从根上消灭"黑"
+            float lum = dot(diffuseColor.rgb, vec3(0.33));
+            float shade = 0.86 + 0.50 * lum;               // 保留贴图的明暗起伏
 
-            vec3 pink = vec3(1.0, 0.74, 0.82);                        // 淡粉
-            diffuseColor.rgb = mix(diffuseColor.rgb, pink, thread * 0.62);
+            vec3 cPink = vec3(1.00, 0.68, 0.82);
+            vec3 cLav  = vec3(0.70, 0.54, 1.00);
+            vec3 cBlue = vec3(0.24, 0.62, 1.00);
 
-            // 触手与钟体的连接带 → 淡紫
-            float rootBand = smoothstep(0.74, 0.86, vH) * (1.0 - smoothstep(0.90, 0.975, vH));
-            float rootNoise = 0.78 + 0.22 * sin(vR * 16.0 + vH * 34.0);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.72, 0.58, 1.0), rootBand * rootNoise * 0.62);
+            vec3 ramp = mix(cPink, cLav, smoothstep(0.60, 0.84, vH));
+            ramp = mix(ramp, cBlue, smoothstep(0.85, 0.96, vH));
 
-            // 粗的部分（中央口腕/伞下）提亮成淡蓝，避免死黑
-            float thick = (1.0 - thread) * smoothstep(0.30, 0.06, lum) * (1.0 - smoothstep(0.80, 0.92, vH));
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.82, 1.0), thick * 0.22);
+            diffuseColor.rgb = ramp * shade;
           }
         `)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -256,19 +250,10 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
           vec3 rimCol = mix(uRim, vec3(1.0, 0.72, 0.86), 0.35 + 0.35 * sin(uTime * 0.35));
           totalEmissiveRadiance += rimCol * fres * uGlow;
 
-          // 触手本身发光：越往梢部越亮，带一点呼吸
-          float outer2 = smoothstep(0.28, 0.58, vR);
-          float below2 = 1.0 - smoothstep(0.86, 0.965, vH);
-          float lum2 = dot(diffuseColor.rgb, vec3(0.33));
-          float threadGlow = clamp(max(outer2 * below2, smoothstep(0.22, 0.05, lum2) * below2 * 0.8), 0.0, 1.0);
-          threadGlow *= 0.85 + 0.15 * sin(vH * 43.0 + vR * 9.0);
-          float breathe = 0.75 + 0.25 * sin(uTime * 1.5 + vH * 5.0);
-          totalEmissiveRadiance += vec3(1.0, 0.72, 0.82) * threadGlow * breathe * (0.30 + uGlow * 0.30);
-
-          // 根部淡紫辉光：把"伞盖—触手"的接缝点亮
-          float rootGlow = smoothstep(0.72, 0.85, vH) * (1.0 - smoothstep(0.90, 0.975, vH));
-          totalEmissiveRadiance += vec3(0.58, 0.40, 1.0) * rootGlow * (0.16 + uGlow * 0.22);
-        `);
+          // 让色带自己发光：整条水母都有柔和内光
+          float breathe = 0.85 + 0.15 * sin(uTime * 1.4 - vH * 3.5);
+          totalEmissiveRadiance += diffuseColor.rgb * breathe * (0.12 + uGlow * 0.18) * (1.0 + 0.5 * (1.0 - vH));
+                `);
 
       mat.userData.shader = shader;
       shaders.push(shader);

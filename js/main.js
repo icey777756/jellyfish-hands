@@ -302,7 +302,7 @@ function tick() {
   }
   bgMat.uniforms.uTime.value += dt;
 
-  if (bloomPass) bloomPass.strength = 0.34 + input.bloom * 0.40;
+  if (bloomPass) bloomPass.strength = 0.22 + input.bloom * 0.30;
   if (composer) composer.render(dt); else renderer.render(scene, camera);
 }
 
