@@ -166,13 +166,22 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       shader.uniforms.uContract = { value: 0 };
       shader.uniforms.uSway = { value: 0.6 };
       shader.uniforms.uGlow = { value: 0.9 };
+      shader.uniforms.uFlow = { value: 0.5 };
       shader.uniforms.uRim = { value: new THREE.Color('#7fd8ff') };
       shader.uniforms.uBottom = { value: yBottom };
       shader.uniforms.uTop = { value: yTop };
 
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
-          uniform float uTime, uContract, uSway, uBottom, uTop;
+          uniform float uTime, uContract, uSway, uBottom, uTop, uFlow;
+
+          // 廉价的三维"水流"场：三个不同频率的正弦叠加，够有机、手机上也不贵
+          vec3 flowField(vec3 p, float t) {
+            float a = sin(p.x * 2.1 + t * 0.9) * cos(p.z * 1.7 - t * 0.7);
+            float b = sin(p.y * 1.4 - t * 0.6 + p.z * 2.3);
+            float c = cos(p.y * 3.1 + t * 1.3) * sin(p.x * 2.8 - t * 0.8);
+            return vec3(a + 0.5 * c, 0.55 * b, b + 0.5 * c);
+          }
         `)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
           {
@@ -191,6 +200,19 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
             transformed.x += w1 * tail * 0.11 * uSway;
             transformed.z += w2 * tail * 0.09 * uSway;
             transformed.y += sin(uTime * 0.9 - h * 3.0) * tail * 0.03 * uSway;
+
+            // 二次摆动：水流扰动，触手权重更大，越靠近梢部越明显
+            vec3 flow = flowField(transformed * 1.35 + vec3(0.0, uTime * 0.15, 0.0), uTime);
+            transformed += flow * (0.010 + tail * 0.075) * uFlow;
+
+            // 整体洋流：更低频、幅度更小，让水母像被水推着晃
+            vec3 drift = flowField(transformed * 0.35 + 17.0, uTime * 0.45);
+            transformed += drift * 0.035 * uFlow;
+
+            // 轻微扭转：伞盖边缘转一点，避免像硬塑料
+            float twist = sin(transformed.y * 2.2 + uTime * 0.8) * 0.06 * uFlow * (0.3 + tail);
+            float ct = cos(twist), stt = sin(twist);
+            transformed.xz = mat2(ct, -stt, stt, ct) * transformed.xz;
           }
         `);
 
@@ -265,6 +287,7 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       sh.uniforms.uTime.value = state.time;
       sh.uniforms.uContract.value = contract;
       sh.uniforms.uSway.value = 0.5 + state.energy * 0.7 + state.bloom * 0.5;
+      sh.uniforms.uFlow.value = 0.55 + state.energy * 0.5 + state.bloom * 0.8;
       sh.uniforms.uGlow.value = 0.34 + state.bloom * 0.7 + contract * 0.18;
     }
 
