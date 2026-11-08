@@ -35,9 +35,9 @@ for i, a in enumerate(argv):
         STAGE = argv[i + 1]
 
 # ------------------------------------------------------------------ 参数
-BELL_SEG, BELL_RING = 96, 26          # 瓣要圆滑，段数给足
-BELL_LOBE = 8                          # 伞瓣数量
-BELL_THETA = math.radians(110)
+BELL_SEG, BELL_RING = 128, 34          # 瓣要圆滑，段数给足
+BELL_LOBE = 9                          # 伞瓣数量
+BELL_THETA = math.radians(118)
 
 FROND_COUNT, FROND_RINGS = 5, 40       # 褶皱口腕
 FILAMENT_COUNT, FILAMENT_RINGS = 14, 44  # 细丝
@@ -80,19 +80,26 @@ def add_vertex_colors(obj, color_fn):
 
 # ------------------------------------------------------------------ 钟体
 def bell_point(theta, phi):
-    """伞盖参数化：8 瓣、边缘起伏、略微外翻。"""
+    """蘑菇伞盖：饱满的肩部、9 个圆润垂瓣、表面有低频疙瘩。"""
     lobe = math.cos(BELL_LOBE * phi)
-    r = math.sin(theta) * (1.0 + 0.10 * lobe)
-    z = math.cos(theta)
 
-    drop = max(0.0, (theta - math.radians(66)) / BELL_THETA) * 0.16
-    r *= 1.0 + drop * 0.08
-    z -= drop
-    # 瓣与瓣之间凹陷，边缘随瓣起伏
-    z += 0.10 * lobe * max(0.0, (theta - math.radians(55)) / BELL_THETA) ** 1.4
+    # 肩部更饱满：sin^0.75，顶部更平
+    base_r = math.sin(theta) ** 0.78
+    r = base_r * 1.12 * (1.0 + 0.11 * lobe)
 
-    wobble = 0.008 * math.sin(phi * 7 + theta * 5) + 0.006 * math.cos(phi * 3 - theta * 6)
-    r += wobble
+    z = math.cos(theta) * 0.66
+    # 伞沿向内收、向下坠（参考图的边缘是卷下去的）
+    drop = max(0.0, (theta - math.radians(62)) / BELL_THETA) * 0.12
+    r *= 1.0 - drop * 0.55
+    z -= drop * 1.5
+    # 垂瓣的起伏
+    z += 0.085 * lobe * max(0.0, (theta - math.radians(50)) / BELL_THETA) ** 1.3
+
+    # 表面疙瘩：几个不同频率叠加，做出手办的黏土感
+    bump = (0.010 * math.sin(phi * 7.0 + theta * 8.0)
+            + 0.007 * math.cos(phi * 11.0 - theta * 5.0)
+            + 0.005 * math.sin(phi * 17.0 + theta * 13.0))
+    r += bump * (0.35 + 0.65 * math.sin(theta))
     return r, z
 
 
@@ -208,6 +215,40 @@ def frond_path(t, k):
     return Vector((math.cos(ang) * r, math.sin(ang) * r, z)), ang
 
 
+def build_margin_arms(count=12, rings=10):
+    """伞沿一圈粗短口腕（参考图里钟体下方那一圈钝头触须）。"""
+    verts, faces = [], []
+
+    def path(t, k):
+        ang = 2 * math.pi * k / count + 0.26
+        r = 0.96 + 0.06 * math.sin(t * 3.0)
+        z = -0.10 - t * 0.95 + 0.04 * math.sin(t * 4.0 + k)
+        return Vector((math.cos(ang) * r, math.sin(ang) * r, z)), ang
+
+    for k in range(count):
+        base = len(verts)
+        for s_ in range(rings + 1):
+            t = s_ / rings
+            c, ang = path(t, k)
+            ca, sa = math.cos(ang), math.sin(ang)
+            radius = 0.105 * (1 - 0.70 * t) + 0.018
+            for j in range(6):
+                b = 2 * math.pi * j / 6
+                verts.append((c.x + ca * math.cos(b) * radius,
+                              c.y + sa * math.cos(b) * radius,
+                              c.z + math.sin(b) * radius))
+        for s_ in range(rings):
+            a = base + s_ * 6
+            b = a + 6
+            for j in range(6):
+                j2 = (j + 1) % 6
+                faces.append((a + j, a + j2, b + j2, b + j))
+
+    ob = link_mesh_from("arms", verts, faces)
+    smooth(ob)
+    return ob
+
+
 def build_fronds():
     """5 条宽大褶皱薄膜；左右两侧各加一条细边，用发光材质做"蕾丝边"。"""
     verts, faces, weights, edge_faces = [], [], [], []
@@ -220,10 +261,10 @@ def build_fronds():
             t = s / FROND_RINGS
             c, ang = frond_path(t, k)
             ca, sa = math.cos(ang), math.sin(ang)
-            width = (0.34 * (1.0 - 0.5 * t)) * (1.0 + 0.22 * math.sin(t * 9 + k))
+            width = (0.26 * (1.0 - 0.5 * t)) * (1.0 + 0.30 * math.sin(t * 9 + k)) * (1.0 + 0.18 * math.sin(t * 22.0 + k * 2.0))
 
             def push(u, extra=0.0):
-                ruffle = math.sin(u * 5.0 + t * 7.0 + k * 2.0) * 0.085 * (0.3 + t)
+                ruffle = math.sin(u * 6.0 + t * 9.0 + k * 2.0) * 0.105 * (0.3 + t)
                 edge_wave = math.sin(t * 11 + k * 3) * 0.05 * abs(u) ** 2
                 off = width * u * (1.0 + extra)
                 verts.append((c.x + (-sa) * off + ca * ruffle,
@@ -539,6 +580,7 @@ def build_all(with_material=True):
     w.setup(resolution=(1200, 1500), samples=64, transparent=True, exposure=0.0)
 
     bell = build_bell()
+    arms = build_margin_arms()
     collar = build_collar()
     dots = build_dots()
 
@@ -553,7 +595,7 @@ def build_all(with_material=True):
     skin(fronds, rig, chains["frond"], frond_w, 10)         # 横向 9 段 → 10 个点
     skin(fils, rig, chains["fil"], fil_w, 6)                # 飘带截面 → 6 个点
 
-    for ob in (bell, collar, dots):
+    for ob in (bell, arms, collar, dots):
         ob.parent = rig
         ob.matrix_parent_inverse = rig.matrix_world.inverted()
 
@@ -569,6 +611,7 @@ def build_all(with_material=True):
             vcol.layer_name = "Col"
             nt.links.new(vcol.outputs["Color"], bsdf.inputs["Base Color"])
         w.assign(bell, m_bell)
+        w.assign(arms, m_frond)
         w.assign(collar, m_collar)
         w.assign(dots, m_gold_dots)
         fronds.data.materials[0] = m_frond
@@ -583,10 +626,10 @@ def build_all(with_material=True):
                 fils.data.polygons[k * per + f].material_index = idx
     else:
         grey = w.material("blockout", "#9a9a9a", roughness=0.9)
-        for ob in (bell, collar, dots, fronds, fils):
+        for ob in (bell, arms, collar, dots, fronds, fils):
             w.assign(ob, grey)
 
-    return {"bell": bell, "collar": collar, "dots": dots,
+    return {"bell": bell, "arms": arms, "collar": collar, "dots": dots,
             "fronds": fronds, "filaments": fils, "rig": rig}
 
 
@@ -614,7 +657,30 @@ def shot_views(prefix):
     return out
 
 
-if STAGE == "blockout":
+if STAGE == "clay":
+    # 白模渲染：和你给的 neural4d 截图对照，确认几何是 Blender 里建出来的
+    build_all(with_material=False)
+    clay = w.material("clay", "#d8d8d8", roughness=0.62, metallic=0.0)
+    for ob in bpy.context.scene.objects:
+        if ob.type == "MESH":
+            w.assign(ob, clay)
+    bpy.context.scene.world = bpy.data.worlds.new("clayworld")
+    bpy.context.scene.world.color = (0.08, 0.08, 0.09)
+    w.setup(resolution=(760, 1000), samples=48, transparent=False, exposure=0.15)
+    w.env_light("#3a3d44", 1.1)
+    w.area("key", location=(2.6, -3.4, 3.2), energy=420, size=3.2, target=(0, 0, 0.2))
+    w.area("fill", location=(-3.0, -1.4, 1.0), energy=140, size=5.0, target=(0, 0, -0.2))
+    views = []
+    for name, pos, target, focal in (
+        ("front", (0.1, -7.6, 1.0), (0, 0, -1.5), 52),
+        ("three_quarter", (3.6, -6.6, 1.6), (0, 0, -1.5), 52),
+        ("top", (0.3, -5.2, 3.4), (0, 0, -0.6), 46),
+    ):
+        w.camera(name="clay_" + name, position=pos, target=target, focal=focal)
+        bpy.context.scene.camera = bpy.data.objects["clay_" + name]
+        views.append(w.render(os.path.join(DIST, f"clay_{name}.png")))
+    print("[jelly] 白模渲染:", views)
+elif STAGE == "blockout":
     build_all(with_material=False)
     look()
     print("[jelly] 白模:", shot_views("blockout"))
