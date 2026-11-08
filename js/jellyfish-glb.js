@@ -170,10 +170,13 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       shader.uniforms.uRim = { value: new THREE.Color('#7fd8ff') };
       shader.uniforms.uBottom = { value: yBottom };
       shader.uniforms.uTop = { value: yTop };
+      shader.uniforms.uRadius = { value: Math.max(boundsBox.max.x, boundsBox.max.z) || 1 };
 
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
-          uniform float uTime, uContract, uSway, uBottom, uTop, uFlow;
+          uniform float uTime, uContract, uSway, uBottom, uTop, uFlow, uRadius;
+          varying float vH;
+          varying float vR;
 
           // 廉价的三维"水流"场：三个不同频率的正弦叠加，够有机、手机上也不贵
           vec3 flowField(vec3 p, float t) {
@@ -186,6 +189,8 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
         .replace('#include <begin_vertex>', `#include <begin_vertex>
           {
             float h = clamp((transformed.y - uBottom) / max(uTop - uBottom, 0.001), 0.0, 1.0);
+            vH = h;
+            vR = clamp(length(transformed.xz) / max(uRadius, 0.001), 0.0, 1.5);
             float bell = smoothstep(0.62, 0.92, h);          // 伞盖为正，触手区为 0
             float tail = 1.0 - bell;
 
@@ -220,11 +225,49 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
         .replace('#include <common>', `#include <common>
           uniform vec3 uRim;
           uniform float uGlow, uTime;
+          varying float vH;
+          varying float vR;
+        `)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          {
+            // 外围垂下来的细长触手 → 淡粉；中央口腕与伞盖 → 保持蓝
+            float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+            float dark = smoothstep(0.24, 0.05, lum);                 // 贴图偏黑的细丝
+            float outer = smoothstep(0.28, 0.55, vR);                 // 离轴越远越是外围丝
+            float below = 1.0 - smoothstep(0.88, 0.975, vH);           // 伞盖以下
+            float thread = clamp(max(outer * below, dark * below * 0.9), 0.0, 1.0);
+            thread *= 0.85 + 0.15 * sin(vH * 47.0 + vR * 12.0);       // 打散分界
+
+            vec3 pink = vec3(1.0, 0.74, 0.82);                        // 淡粉
+            diffuseColor.rgb = mix(diffuseColor.rgb, pink, thread * 0.62);
+
+            // 触手与钟体的连接带 → 淡紫
+            float rootBand = smoothstep(0.74, 0.86, vH) * (1.0 - smoothstep(0.90, 0.975, vH));
+            float rootNoise = 0.78 + 0.22 * sin(vR * 16.0 + vH * 34.0);
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.72, 0.58, 1.0), rootBand * rootNoise * 0.62);
+
+            // 粗的部分（中央口腕/伞下）提亮成淡蓝，避免死黑
+            float thick = (1.0 - thread) * smoothstep(0.30, 0.06, lum) * (1.0 - smoothstep(0.80, 0.92, vH));
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.82, 1.0), thick * 0.22);
+          }
         `)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           float fres = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 2.4);
           vec3 rimCol = mix(uRim, vec3(1.0, 0.72, 0.86), 0.35 + 0.35 * sin(uTime * 0.35));
           totalEmissiveRadiance += rimCol * fres * uGlow;
+
+          // 触手本身发光：越往梢部越亮，带一点呼吸
+          float outer2 = smoothstep(0.28, 0.58, vR);
+          float below2 = 1.0 - smoothstep(0.86, 0.965, vH);
+          float lum2 = dot(diffuseColor.rgb, vec3(0.33));
+          float threadGlow = clamp(max(outer2 * below2, smoothstep(0.22, 0.05, lum2) * below2 * 0.8), 0.0, 1.0);
+          threadGlow *= 0.85 + 0.15 * sin(vH * 43.0 + vR * 9.0);
+          float breathe = 0.75 + 0.25 * sin(uTime * 1.5 + vH * 5.0);
+          totalEmissiveRadiance += vec3(1.0, 0.72, 0.82) * threadGlow * breathe * (0.30 + uGlow * 0.30);
+
+          // 根部淡紫辉光：把"伞盖—触手"的接缝点亮
+          float rootGlow = smoothstep(0.72, 0.85, vH) * (1.0 - smoothstep(0.90, 0.975, vH));
+          totalEmissiveRadiance += vec3(0.58, 0.40, 1.0) * rootGlow * (0.16 + uGlow * 0.22);
         `);
 
       mat.userData.shader = shader;
@@ -246,7 +289,7 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
     action.play();
   }
 
-  const state = { energy: 0.45, bloom: 0, time: 0 };
+  const state = { energy: 0.45, bloom: 0, time: 0, thrust: 0 };
   const morph = { bloom: 0, contract: 0 };
   const target = new THREE.Vector3();
 
@@ -277,11 +320,28 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       if (m.emissive && 'emissiveIntensity' in m) m.emissiveIntensity = glow;
     }
 
-    // 形变：收缩节律（快速收、缓慢放，像真水母）
-    const period = 2.6 - state.energy * 0.9;
+    // 搏动节律：快速收缩（发力）→ 缓慢放松 → 滑行停顿，三段的节奏更像真水母
+    const period = 2.9 - state.energy * 1.0;
     const k = (state.time % period) / period;
-    const quick = k < 0.32 ? Math.sin((k / 0.32) * Math.PI * 0.5) : Math.cos(((k - 0.32) / 0.68) * Math.PI * 0.5);
-    const contract = THREE.MathUtils.clamp(quick * (0.55 + state.energy * 0.8) + morph.contract * 0.6, 0, 1.6);
+
+    let pulse;
+    if (k < 0.20) {
+      const t = k / 0.20;
+      pulse = 1 - Math.pow(1 - t, 2.2);          // 发力段：先快后慢，收得干脆
+    } else if (k < 0.78) {
+      const t = (k - 0.20) / 0.58;
+      pulse = Math.pow(1 - t, 1.7);              // 放松段：慢慢弹回
+    } else {
+      const t = (k - 0.78) / 0.22;
+      pulse = 0.04 * Math.sin(t * Math.PI);      // 滑行：微微回弹一下
+    }
+
+    const contract = THREE.MathUtils.clamp(
+      pulse * (0.55 + state.energy * 0.9) + morph.contract * 0.6, 0, 1.6);
+
+    // 推进力：收缩时向上顶一下，随后缓慢下沉（游动感）
+    const thrust = contract * 0.22;
+    state.thrust += (thrust - state.thrust) * Math.min(1, dt * 2.2);
 
     for (const sh of shaders) {
       sh.uniforms.uTime.value = state.time;
@@ -297,7 +357,9 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
 
     // 游动：朝手指方向漂移 + 轻微转向
     const steer = input.steer || { x: 0, y: 0 };
-    target.set(steer.x * 1.1, -steer.y * 0.7 + Math.sin(state.time * 0.8) * 0.1, 0);
+    target.set(steer.x * 1.1,
+               -steer.y * 0.7 + Math.sin(state.time * 0.8) * 0.1 + (state.thrust || 0),
+               0);
     group.position.lerp(target, Math.min(1, dt * 2));
 
     const breath = Math.sin(state.time * (0.9 + state.energy * 1.4));
