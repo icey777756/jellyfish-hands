@@ -131,11 +131,10 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       m.side = THREE.DoubleSide;
       m.envMapIntensity = 1.4;
       if (m.emissive) {
-        // 把反照率贴图当作自发光，雕塑会像从内部透光，斑点也会亮起来
-        m.emissive = new THREE.Color(0xffffff);
-        if (m.map) m.emissiveMap = m.map;
-        m.emissiveIntensity = 0.28;
-        m.toneMapped = true;
+        // 自发光完全交给色带着色器，这里清零，避免和色带互相染色
+        m.emissiveMap = null;
+        m.emissive = new THREE.Color(0x000000);
+        m.emissiveIntensity = 0;
       }
 
       // 金色斑点：必须排在半透明钟体之后渲染，否则会被蓝色罩住变成灰白
@@ -154,10 +153,16 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
     if (o.morphTargetDictionary && 'bloom' in o.morphTargetDictionary) bell = o;
   });
 
-  // ---- 顶点形变：伞盖收缩 + 触手拖尾摆动（静态网格的"活起来"方案）
-  const boundsBox = new THREE.Box3().setFromObject(model);
-  const yTop = boundsBox.max.y;
-  const yBottom = boundsBox.min.y;
+  // ---- 顶点形变 + 色带：用「局部空间」的包围盒（模型被整体缩放过了，不能用世界包围盒）
+  const localBox = new THREE.Box3();
+  model.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    o.geometry.computeBoundingBox();
+    if (o.geometry.boundingBox) localBox.union(o.geometry.boundingBox);
+  });
+  if (localBox.isEmpty()) localBox.set(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
+  const yTop = localBox.max.y;
+  const yBottom = localBox.min.y;
   const shaders = [];
 
   const patch = (mat) => {
@@ -170,7 +175,7 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       shader.uniforms.uRim = { value: new THREE.Color('#7fd8ff') };
       shader.uniforms.uBottom = { value: yBottom };
       shader.uniforms.uTop = { value: yTop };
-      shader.uniforms.uRadius = { value: Math.max(boundsBox.max.x, boundsBox.max.z) || 1 };
+      shader.uniforms.uRadius = { value: Math.max(localBox.max.x, localBox.max.z) || 1 };
 
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
@@ -196,23 +201,23 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
 
             // 伞盖收缩：横向收、纵向拉伸，边缘收得更多
             float rim = smoothstep(0.58, 0.78, h) * (1.0 - smoothstep(0.9, 1.0, h));
-            transformed.xz *= 1.0 - uContract * (0.10 * bell + 0.06 * rim);
-            transformed.y += uContract * 0.06 * bell;
+            transformed.xz *= 1.0 - uContract * (0.035 * bell + 0.02 * rim);
+            transformed.y += uContract * 0.02 * bell;
 
             // 触手：沿高度相位递延的拖尾摆动
             float w1 = sin(uTime * 1.5 - h * 7.0);
             float w2 = cos(uTime * 1.15 - h * 5.0 + 1.7);
-            transformed.x += w1 * tail * 0.11 * uSway;
-            transformed.z += w2 * tail * 0.09 * uSway;
+            transformed.x += w1 * tail * 0.05 * uSway;
+            transformed.z += w2 * tail * 0.04 * uSway;
             transformed.y += sin(uTime * 0.9 - h * 3.0) * tail * 0.03 * uSway;
 
             // 二次摆动：水流扰动，触手权重更大，越靠近梢部越明显
             vec3 flow = flowField(transformed * 1.35 + vec3(0.0, uTime * 0.15, 0.0), uTime);
-            transformed += flow * (0.010 + tail * 0.075) * uFlow;
+            transformed += flow * (0.006 + tail * 0.030) * uFlow;
 
             // 整体洋流：更低频、幅度更小，让水母像被水推着晃
             vec3 drift = flowField(transformed * 0.35 + 17.0, uTime * 0.45);
-            transformed += drift * 0.035 * uFlow;
+            transformed += drift * 0.018 * uFlow;
 
             // 轻微扭转：伞盖边缘转一点，避免像硬塑料
             float twist = sin(transformed.y * 2.2 + uTime * 0.8) * 0.06 * uFlow * (0.3 + tail);
@@ -233,14 +238,14 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
             // 一条连续的高度色带：粉（触手）→ 淡紫（连接处）→ 蓝（钟体）
             // 完全替换贴图颜色，从根上消灭"黑"
             float lum = dot(diffuseColor.rgb, vec3(0.33));
-            float shade = 0.86 + 0.50 * lum;               // 保留贴图的明暗起伏
+            float shade = 0.75 + 0.35 * lum;               // 保留贴图的明暗起伏
 
-            vec3 cPink = vec3(1.00, 0.68, 0.82);
-            vec3 cLav  = vec3(0.70, 0.54, 1.00);
-            vec3 cBlue = vec3(0.24, 0.62, 1.00);
+            vec3 cPink = vec3(1.00, 0.42, 0.62);
+            vec3 cLav  = vec3(0.55, 0.36, 0.95);
+            vec3 cBlue = vec3(0.16, 0.45, 1.00);
 
-            vec3 ramp = mix(cPink, cLav, smoothstep(0.60, 0.84, vH));
-            ramp = mix(ramp, cBlue, smoothstep(0.85, 0.96, vH));
+            vec3 ramp = mix(cPink, cLav, smoothstep(0.52, 0.86, vH));
+            ramp = mix(ramp, cBlue, smoothstep(0.83, 0.985, vH));
 
             diffuseColor.rgb = ramp * shade;
           }
@@ -252,7 +257,7 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
 
           // 让色带自己发光：整条水母都有柔和内光
           float breathe = 0.85 + 0.15 * sin(uTime * 1.4 - vH * 3.5);
-          totalEmissiveRadiance += diffuseColor.rgb * breathe * (0.12 + uGlow * 0.18) * (1.0 + 0.5 * (1.0 - vH));
+          totalEmissiveRadiance += diffuseColor.rgb * breathe * (0.24 + uGlow * 0.28) * (1.0 + 0.35 * (1.0 - vH));
                 `);
 
       mat.userData.shader = shader;

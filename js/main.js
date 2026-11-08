@@ -31,7 +31,7 @@ const LOW_END = (navigator.hardwareConcurrency || 8) <= 4;
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW_END ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.72;
+renderer.toneMappingExposure = 0.86;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#04050a');
