@@ -59,6 +59,10 @@
   </div>
 </section>
 
+<script>
+  addEventListener('error', (e) => { document.title = 'ERR: ' + (e.message || e); });
+  addEventListener('unhandledrejection', (e) => { document.title = 'REJ: ' + (e.reason && e.reason.message || e.reason); });
+</script>
 <script type="module" src="./js/main.js"></script>
 </body>
 </html>

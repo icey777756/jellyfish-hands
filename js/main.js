@@ -31,7 +31,7 @@ const LOW_END = (navigator.hardwareConcurrency || 8) <= 4;
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW_END ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.85;
+renderer.toneMappingExposure = 0.82;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#04050a');
@@ -86,6 +86,7 @@ createJellyfishFromGLB('./assets/jellyfish.glb')
   })
   .catch((err) => {
     console.error('[jelly] GLB 载入失败', err);
+    document.title = 'LOADFAIL: ' + (err && err.message);
     toast('水母模型载入失败，请检查 assets/jellyfish.glb');
   });
 
@@ -301,7 +302,7 @@ function tick() {
   }
   bgMat.uniforms.uTime.value += dt;
 
-  if (bloomPass) bloomPass.strength = 0.42 + input.bloom * 0.45;
+  if (bloomPass) bloomPass.strength = 0.26 + input.bloom * 0.35;
   if (composer) composer.render(dt); else renderer.render(scene, camera);
 }
 

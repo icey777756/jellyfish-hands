@@ -83,6 +83,37 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
   const gltf = await loader.loadAsync(url);
   const group = new THREE.Group();
   const model = gltf.scene;
+
+  // 统一尺寸与位置：不管模型原始单位多大，都规整到画面中央
+  const preBox = new THREE.Box3().setFromObject(model);
+  const preSize = preBox.getSize(new THREE.Vector3());
+  const targetHeight = 3.55;
+  model.scale.multiplyScalar(targetHeight / (preSize.y || 1));
+  model.updateMatrixWorld(true);
+
+  // 缩放后重新量一次包围盒，居中到镜头注视点 (0, -1, 0)
+  const box2 = new THREE.Box3().setFromObject(model);
+  const c2 = box2.getCenter(new THREE.Vector3());
+  model.position.x -= c2.x;
+  model.position.y -= c2.y;
+  model.position.z -= c2.z;
+  model.position.y -= 1.0;
+
+  model.updateMatrixWorld(true);
+  const finalBox = new THREE.Box3().setFromObject(model);
+  const fs = finalBox.getSize(new THREE.Vector3());
+  const fc = finalBox.getCenter(new THREE.Vector3());
+  window.__jellyBox = {
+    size: [+fs.x.toFixed(2), +fs.y.toFixed(2), +fs.z.toFixed(2)],
+    center: [+fc.x.toFixed(2), +fc.y.toFixed(2), +fc.z.toFixed(2)],
+    cam: (() => {
+      const c = window.__stage && window.__stage.camera;
+      return c ? [+c.position.x.toFixed(2), +c.position.y.toFixed(2), +c.position.z.toFixed(2)] : null;
+    })()
+  };
+
+  const baseScale = model.scale.x;   // update() 里在此基础上做呼吸
+
   group.add(model);
 
   let bell = null;
@@ -98,9 +129,9 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
       m.side = THREE.DoubleSide;
       m.envMapIntensity = 1.4;
       if (m.emissive) {
-        // 触须（fil_*）是这版的视觉重点：让它们真正"发光"
-        const luminous = /fil_|edge/.test(m.name || '');
-        m.emissiveIntensity = luminous ? 2.6 : 1.1;
+        // 扫描件没有自发光贴图，补一点点，让 Bloom 能吃到高光
+        m.emissiveIntensity = 0.08;
+        m.emissive = new THREE.Color('#1e3f7a');
       }
 
       // 金色斑点：必须排在半透明钟体之后渲染，否则会被蓝色罩住变成灰白
@@ -172,8 +203,9 @@ export async function createJellyfishFromGLB(url = './assets/jellyfish.glb') {
     group.rotation.x = THREE.MathUtils.lerp(group.rotation.x, steer.y * 0.16, dt * 3);
     group.rotation.y += dt * (0.08 + state.energy * 0.06);
 
-    const scale = 1 + morph.bloom * 0.12 - morph.contract * 0.10;
-    model.scale.setScalar(scale);
+    const breathe = 1 + morph.bloom * 0.10 - morph.contract * 0.08
+      + Math.sin(state.time * 0.9) * 0.012;
+    model.scale.setScalar(baseScale * breathe);
   }
 
   return {
