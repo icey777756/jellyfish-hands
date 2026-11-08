@@ -76,13 +76,15 @@ const rim = new THREE.DirectionalLight(0x7fd8ff, 0.9);
 rim.position.set(-3, -1, -4);
 scene.add(rim);
 
-// 模型来自 Blender：assets/jellyfish.glb（骨骼动画 + 钟体形态键）
+// 模型来自 Blender：assets/jellyfish.glb（骨骼动画）
 let jelly = null;
+setHud('载入水母…', 'idle');
 createJellyfishFromGLB('./assets/jellyfish.glb')
   .then((j) => {
     jelly = j;
     jelly.setPixelRatio(renderer.getPixelRatio());
     scene.add(jelly.group);
+    if (!FORCED_GESTURE) setHud('漂浮 · 触摸控制', 'idle');
   })
   .catch((err) => {
     console.error('[jelly] GLB 载入失败', err);

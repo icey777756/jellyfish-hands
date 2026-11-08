@@ -15,7 +15,7 @@ from mathutils import Vector
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(ROOT, "assets")
-TARGET_TRIS = 60000
+TARGET_TRIS = 40000
 BONES = 10
 FPS, FRAMES = 24, 96
 
@@ -24,8 +24,8 @@ src = next(o for o in bpy.context.scene.objects if o.type == "MESH")
 
 # 贴图降到 2K
 for img in bpy.data.images:
-    if img.size[0] > 2048:
-        img.scale(2048, 2048)
+    if img.size[0] > 1024:
+        img.scale(1024, 1024)
 
 # 减面
 ratio = min(1.0, TARGET_TRIS / len(src.data.polygons))
@@ -173,7 +173,7 @@ bpy.ops.export_scene.gltf(
     export_normals=True,
     export_materials="EXPORT",
     export_image_format="JPEG",
-    export_image_quality=88,
+    export_image_quality=82,
     export_draco_mesh_compression_enable=True,
     export_draco_mesh_compression_level=6,
     use_selection=False,
